@@ -1,0 +1,45 @@
+{
+  "pluginAlias": "WindmillAC",
+  "pluginType": "platform",
+  "singular": true,
+  "strictValidation": false,
+  "schema": {
+    "type": "object",
+    "required": ["devices"],
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Windmill AC"
+      },
+      "pollInterval": {
+        "title": "Poll Interval (seconds)",
+        "type": "integer",
+        "default": 30,
+        "minimum": 5,
+        "description": "How often to poll the Windmill API for state updates."
+      },
+      "devices": {
+        "title": "Devices",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "Name",
+              "type": "string",
+              "required": true,
+              "default": "Windmill AC"
+            },
+            "token": {
+              "title": "Auth Token",
+              "type": "string",
+              "required": true,
+              "description": "Your Windmill auth token. Find it at https://dashboard.windmillair.com under Device Info."
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+# Repo
+.github/
+.vscode/
+
+# Source
+src/
+
+# Config
+tsconfig.json
+nodemon.json
+eslint.config.js
+.eslintrc
+
+# Test
+test/
