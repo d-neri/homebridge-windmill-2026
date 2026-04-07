@@ -3,6 +3,8 @@ export interface BlynkServiceConfig {
   token: string;
 }
 
+const REQUEST_TIMEOUT_MS = 8000;
+
 export class BlynkService {
   protected readonly serverAddress: string;
   protected readonly token: string;
@@ -17,7 +19,9 @@ export class BlynkService {
     url.searchParams.append('token', this.token);
     url.searchParams.append(pin, '');
 
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to get pin value for ${pin}: ${response.status}`);
@@ -31,7 +35,9 @@ export class BlynkService {
     url.searchParams.append('token', this.token);
     url.searchParams.append(pin, value);
 
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to set pin value for ${pin}: ${response.status}`);

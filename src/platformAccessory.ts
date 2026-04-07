@@ -177,31 +177,36 @@ export class WindmillAccessory {
     this.platform.log.debug('SET TargetHeatingCoolingState:', value);
 
     if (value === this.platform.Characteristic.TargetHeatingCoolingState.OFF) {
-      await this.windmill.setPower(false);
       this.state.power = false;
       this.fanService.updateCharacteristic(this.platform.Characteristic.Active, false);
+      await this.windmill.setPower(false);
       return;
     }
 
-    await this.windmill.setPower(true);
-    this.state.power = true;
-
+    let newMode: Mode;
     switch (value) {
     case this.platform.Characteristic.TargetHeatingCoolingState.COOL:
-      await this.windmill.setMode(Mode.COOL);
-      this.state.mode = Mode.COOL;
+      newMode = Mode.COOL;
       break;
     case this.platform.Characteristic.TargetHeatingCoolingState.HEAT:
-      await this.windmill.setMode(Mode.FAN);
-      this.state.mode = Mode.FAN;
+      newMode = Mode.FAN;
       break;
     case this.platform.Characteristic.TargetHeatingCoolingState.AUTO:
-      await this.windmill.setMode(Mode.ECO);
-      this.state.mode = Mode.ECO;
+    default:
+      newMode = Mode.ECO;
       break;
     }
 
-    await this.windmill.setFanSpeed(this.state.fanSpeed);
+    // Update local state immediately so HomeKit stays responsive
+    this.state.power = true;
+    this.state.mode = newMode;
+
+    // Fire API calls in parallel instead of sequentially
+    await Promise.all([
+      this.windmill.setPower(true),
+      this.windmill.setMode(newMode),
+      this.windmill.setFanSpeed(this.state.fanSpeed),
+    ]);
   }
 
   getCurrentTemperature(): CharacteristicValue {
@@ -215,8 +220,8 @@ export class WindmillAccessory {
   async setTargetTemperature(value: CharacteristicValue): Promise<void> {
     this.platform.log.debug('SET TargetTemperature:', value);
     const fahrenheit = celsiusToFahrenheit(parseFloat(value.toString()));
-    await this.windmill.setTargetTemperature(fahrenheit);
     this.state.targetTemperature = Math.round(fahrenheit);
+    await this.windmill.setTargetTemperature(fahrenheit);
   }
 
   getTemperatureDisplayUnits(): CharacteristicValue {
@@ -240,8 +245,8 @@ export class WindmillAccessory {
     this.platform.log.debug('SET FanActive:', value);
 
     if (value === this.platform.Characteristic.Active.INACTIVE) {
-      await this.windmill.setFanSpeed(FanSpeed.AUTO);
       this.state.fanSpeed = FanSpeed.AUTO;
+      await this.windmill.setFanSpeed(FanSpeed.AUTO);
     }
   }
 
@@ -271,15 +276,16 @@ export class WindmillAccessory {
       return;
     }
 
+    let newSpeed: FanSpeed;
     if (intValue <= 33) {
-      await this.windmill.setFanSpeed(FanSpeed.LOW);
-      this.state.fanSpeed = FanSpeed.LOW;
+      newSpeed = FanSpeed.LOW;
     } else if (intValue <= 66) {
-      await this.windmill.setFanSpeed(FanSpeed.MEDIUM);
-      this.state.fanSpeed = FanSpeed.MEDIUM;
+      newSpeed = FanSpeed.MEDIUM;
     } else {
-      await this.windmill.setFanSpeed(FanSpeed.HIGH);
-      this.state.fanSpeed = FanSpeed.HIGH;
+      newSpeed = FanSpeed.HIGH;
     }
+
+    this.state.fanSpeed = newSpeed;
+    await this.windmill.setFanSpeed(newSpeed);
   }
 }
