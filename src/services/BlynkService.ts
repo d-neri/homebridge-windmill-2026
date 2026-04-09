@@ -3,7 +3,7 @@ export interface BlynkServiceConfig {
   token: string;
 }
 
-const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_TIMEOUT_MS = 5000;
 
 export class BlynkService {
   protected readonly serverAddress: string;
