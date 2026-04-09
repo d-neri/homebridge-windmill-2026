@@ -101,45 +101,69 @@ export class WindmillAccessory {
   }
 
   private async refreshState(): Promise<void> {
-    try {
-      const [power, currentTemperature, targetTemperature, mode, fanSpeed] = await Promise.all([
-        this.windmill.getPower(),
-        this.windmill.getCurrentTemperature(),
-        this.windmill.getTargetTemperature(),
-        this.windmill.getMode(),
-        this.windmill.getFanSpeed(),
-      ]);
+    const results = await Promise.allSettled([
+      this.windmill.getPower(),
+      this.windmill.getCurrentTemperature(),
+      this.windmill.getTargetTemperature(),
+      this.windmill.getMode(),
+      this.windmill.getFanSpeed(),
+    ]);
 
-      this.state = { power, currentTemperature, targetTemperature, mode, fanSpeed };
+    const power = this.extractResult(results[0], 'power');
+    const currentTemperature = this.extractResult(results[1], 'currentTemperature');
+    const targetTemperature = this.extractResult(results[2], 'targetTemperature');
+    const mode = this.extractResult(results[3], 'mode');
+    const fanSpeed = this.extractResult(results[4], 'fanSpeed');
 
-      // Push updated values to HomeKit
-      this.thermostatService.updateCharacteristic(
-        this.platform.Characteristic.CurrentHeatingCoolingState,
-        this.getCurrentHeatingCoolingState(),
-      );
-      this.thermostatService.updateCharacteristic(
-        this.platform.Characteristic.TargetHeatingCoolingState,
-        this.getTargetHeatingCoolingState(),
-      );
-      this.thermostatService.updateCharacteristic(
-        this.platform.Characteristic.CurrentTemperature,
-        this.getCurrentTemperature(),
-      );
-      this.thermostatService.updateCharacteristic(
-        this.platform.Characteristic.TargetTemperature,
-        this.getTargetTemperature(),
-      );
-      this.fanService.updateCharacteristic(
-        this.platform.Characteristic.Active,
-        this.getFanActive(),
-      );
-      this.fanService.updateCharacteristic(
-        this.platform.Characteristic.RotationSpeed,
-        this.getFanRotationSpeed(),
-      );
-    } catch (e) {
-      this.platform.log.warn('Failed to refresh state for %s: %s', this.accessory.displayName, e);
+    if (power !== undefined) {
+      this.state.power = power;
     }
+    if (currentTemperature !== undefined) {
+      this.state.currentTemperature = currentTemperature;
+    }
+    if (targetTemperature !== undefined) {
+      this.state.targetTemperature = targetTemperature;
+    }
+    if (mode !== undefined) {
+      this.state.mode = mode;
+    }
+    if (fanSpeed !== undefined) {
+      this.state.fanSpeed = fanSpeed;
+    }
+
+    // Always push best-known state to HomeKit
+    this.thermostatService.updateCharacteristic(
+      this.platform.Characteristic.CurrentHeatingCoolingState,
+      this.getCurrentHeatingCoolingState(),
+    );
+    this.thermostatService.updateCharacteristic(
+      this.platform.Characteristic.TargetHeatingCoolingState,
+      this.getTargetHeatingCoolingState(),
+    );
+    this.thermostatService.updateCharacteristic(
+      this.platform.Characteristic.CurrentTemperature,
+      this.getCurrentTemperature(),
+    );
+    this.thermostatService.updateCharacteristic(
+      this.platform.Characteristic.TargetTemperature,
+      this.getTargetTemperature(),
+    );
+    this.fanService.updateCharacteristic(
+      this.platform.Characteristic.Active,
+      this.getFanActive(),
+    );
+    this.fanService.updateCharacteristic(
+      this.platform.Characteristic.RotationSpeed,
+      this.getFanRotationSpeed(),
+    );
+  }
+
+  private extractResult<T>(result: PromiseSettledResult<T>, label: string): T | undefined {
+    if (result.status === 'fulfilled') {
+      return result.value;
+    }
+    this.platform.log.warn('Failed to refresh %s for %s: %s', label, this.accessory.displayName, result.reason);
+    return undefined;
   }
 
   // --- Thermostat Handlers ---
@@ -173,35 +197,42 @@ export class WindmillAccessory {
     }
   }
 
-  async setTargetHeatingCoolingState(value: CharacteristicValue): Promise<void> {
+  setTargetHeatingCoolingState(value: CharacteristicValue): void {
     this.platform.log.debug('SET TargetHeatingCoolingState:', value);
 
     if (value === this.platform.Characteristic.TargetHeatingCoolingState.OFF) {
-      await this.windmill.setPower(false);
       this.state.power = false;
       this.fanService.updateCharacteristic(this.platform.Characteristic.Active, false);
+      this.windmill.setPower(false).catch((e) => {
+        this.platform.log.warn('Failed to set power off: %s', e);
+      });
       return;
     }
 
-    await this.windmill.setPower(true);
-    this.state.power = true;
-
+    let newMode: Mode;
     switch (value) {
     case this.platform.Characteristic.TargetHeatingCoolingState.COOL:
-      await this.windmill.setMode(Mode.COOL);
-      this.state.mode = Mode.COOL;
+      newMode = Mode.COOL;
       break;
     case this.platform.Characteristic.TargetHeatingCoolingState.HEAT:
-      await this.windmill.setMode(Mode.FAN);
-      this.state.mode = Mode.FAN;
+      newMode = Mode.FAN;
       break;
     case this.platform.Characteristic.TargetHeatingCoolingState.AUTO:
-      await this.windmill.setMode(Mode.ECO);
-      this.state.mode = Mode.ECO;
+    default:
+      newMode = Mode.ECO;
       break;
     }
 
-    await this.windmill.setFanSpeed(this.state.fanSpeed);
+    this.state.power = true;
+    this.state.mode = newMode;
+
+    Promise.all([
+      this.windmill.setPower(true),
+      this.windmill.setMode(newMode),
+      this.windmill.setFanSpeed(this.state.fanSpeed),
+    ]).catch((e) => {
+      this.platform.log.warn('Failed to set heating/cooling state: %s', e);
+    });
   }
 
   getCurrentTemperature(): CharacteristicValue {
@@ -212,11 +243,13 @@ export class WindmillAccessory {
     return fahrenheitToCelsius(this.state.targetTemperature);
   }
 
-  async setTargetTemperature(value: CharacteristicValue): Promise<void> {
+  setTargetTemperature(value: CharacteristicValue): void {
     this.platform.log.debug('SET TargetTemperature:', value);
     const fahrenheit = celsiusToFahrenheit(parseFloat(value.toString()));
-    await this.windmill.setTargetTemperature(fahrenheit);
     this.state.targetTemperature = Math.round(fahrenheit);
+    this.windmill.setTargetTemperature(fahrenheit).catch((e) => {
+      this.platform.log.warn('Failed to set target temperature: %s', e);
+    });
   }
 
   getTemperatureDisplayUnits(): CharacteristicValue {
@@ -236,12 +269,14 @@ export class WindmillAccessory {
     return this.platform.Characteristic.Active.ACTIVE;
   }
 
-  async setFanActive(value: CharacteristicValue): Promise<void> {
+  setFanActive(value: CharacteristicValue): void {
     this.platform.log.debug('SET FanActive:', value);
 
     if (value === this.platform.Characteristic.Active.INACTIVE) {
-      await this.windmill.setFanSpeed(FanSpeed.AUTO);
       this.state.fanSpeed = FanSpeed.AUTO;
+      this.windmill.setFanSpeed(FanSpeed.AUTO).catch((e) => {
+        this.platform.log.warn('Failed to set fan auto: %s', e);
+      });
     }
   }
 
@@ -262,7 +297,7 @@ export class WindmillAccessory {
     }
   }
 
-  async setFanRotationSpeed(value: CharacteristicValue): Promise<void> {
+  setFanRotationSpeed(value: CharacteristicValue): void {
     this.platform.log.debug('SET FanRotationSpeed:', value);
 
     const intValue = parseInt(value.toString(), 10);
@@ -271,15 +306,18 @@ export class WindmillAccessory {
       return;
     }
 
+    let newSpeed: FanSpeed;
     if (intValue <= 33) {
-      await this.windmill.setFanSpeed(FanSpeed.LOW);
-      this.state.fanSpeed = FanSpeed.LOW;
+      newSpeed = FanSpeed.LOW;
     } else if (intValue <= 66) {
-      await this.windmill.setFanSpeed(FanSpeed.MEDIUM);
-      this.state.fanSpeed = FanSpeed.MEDIUM;
+      newSpeed = FanSpeed.MEDIUM;
     } else {
-      await this.windmill.setFanSpeed(FanSpeed.HIGH);
-      this.state.fanSpeed = FanSpeed.HIGH;
+      newSpeed = FanSpeed.HIGH;
     }
+
+    this.state.fanSpeed = newSpeed;
+    this.windmill.setFanSpeed(newSpeed).catch((e) => {
+      this.platform.log.warn('Failed to set fan speed: %s', e);
+    });
   }
 }
